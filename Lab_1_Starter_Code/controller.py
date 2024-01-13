@@ -9,6 +9,7 @@ Last Modified Date: December 9th, 2021
 import sys
 from datetime import date, datetime
 import socket
+import heapq
 
 # Please do not modify the name of the log file, otherwise you will lose points because the grader won't be able to find your log file
 LOG_FILE = "Controller.log"
@@ -59,21 +60,6 @@ def register_response_sent(switch_id):
 # For any switch that has been killed, do not include the routes that are going out from that switch. 
 # One example can be found in the sample log in starter code. 
 # After switch 1 is killed, the routing update from the controller does not have routes from switch 1 to other switches.
-
-def create_routing_table(d):
-    '''This function takes in the dictionary returned by open_file and creates
-    the routing table. '''
-    routing_table = []
-    for switch_id in d:
-        # self_route = [switch_id,switch_id,switch_id,0]
-        # routing_table.append(self_route)
-        # print(f"switch_id:{switch_id}")
-        for key,value in d[switch_id].items():
-            l = [switch_id,key,key,value]
-            routing_table.append(l)
-            # print(key,value)
-        # print()
-    return routing_table
 
 def routing_table_update(routing_table):
     log = []
@@ -129,22 +115,173 @@ def open_file(config_file):
     The value is a nested dictionary that has a key-value pair for each 
     neighbor where key=neighbor_id and value=link cost. 
     ie. d = {node1:{node2:cost, node3:cost}, node2:{node3:cost}}'''
-    # d = {}
-    # with open(config_file, 'r') as f:
-    #     f = f.readlines()
-    #     num_switches = int(f[0])
-    #     for _id in range(num_switches):
-    #         for line in f[1:]:
-    #             # print(line)
-    #             line = line.split()
-    #             switch_id = int(line[0])
-    #             switch_neigh = int(line[1])
-    #             cost = int(line[2])
-    #             if switch_id in d:
-    #                 d[switch_id][switch_neigh] = cost
-    #             else:
-    #                 d[switch_id] = {switch_id:0,switch_neigh:cost}
-    # return d,num_switches
+    d = {}
+    
+    with open(config_file, 'r') as f:
+        f = f.readlines()
+        num_switches = int(f[0]) 
+          
+        # Create initial empty dictionary where link cost is zero for self and 
+        # 9999 otherwise
+        for self_id in range(num_switches):
+            d[self_id] = {}
+            for neighbor_id in range(num_switches):
+                if neighbor_id == self_id:
+                    cost = 0
+                else:
+                    cost = 9999
+                d[self_id][neighbor_id] = cost
+
+        # Now update each cost based on the config file
+        for line in f[1:]:
+            line = line.split()
+            self_id = int(line[0])
+            neighbor_id = int(line[1])
+            cost = int(line[2])
+            
+            # Update values
+            d[self_id][neighbor_id] = cost
+            d[neighbor_id][self_id] = cost
+    
+    return d,num_switches
+
+def create_graph(d):
+    '''This function creates a graph from d that is passed into the function 
+    dijkstra_algorithm().'''
+    graph = []
+    for self_id in d:
+        l = []
+        for cost in d[self_id].values():
+            l.append(cost)
+        graph.append(l)
+    return graph
+
+def min_distance(distances, visited):
+    '''Function to find the node with the smallest distance that has not been 
+    visited yet'''
+    # Initialize minimum distance for next node
+    min_val = 9999
+    min_index = -1
+
+    # Loop through all nodes to find minimum distance
+    for i in range(len(distances)):
+        if distances[i] < min_val and i not in visited:
+            min_val = distances[i]
+            min_index = i
+    return min_index
+
+def dijkstra_algorithm(graph, source):
+    '''Implement Dijkstra's algorithm'''
+
+    # Get total number of nodes in the graph
+    num_nodes = len(graph)
+
+    # Initialize distance and visited arrays
+    distances = [9999] * num_nodes
+    visited = []
+    
+    next_hop = [-1] * num_nodes
+    next_hop[source] = 0
+
+    # Set distance at starting node to 0 and add to visited list 
+    distances[source] = 0
+    visited.append(source)
+
+    # Loop through all nodes to find shortest path to each node
+    for i in range(num_nodes):
+
+        # Find minimum distance node that has not been visited yet
+        current_node = min_distance(distances, visited)
+
+        # Add current_node to list of visited nodes
+        visited.append(current_node)
+        
+
+        # Loop through all neighboring nodes of current_node 
+        for j in range(num_nodes):
+
+            # Check if there is an edge from current_node to neighbor
+            if graph[current_node][j] != 0:
+
+                # Calculate the distance from start_node to neighbor, 
+                # passing through current_node
+                new_distance = distances[current_node] + graph[current_node][j]
+
+                # Update the distance if it is less than previous recorded value 
+                if new_distance < distances[j]:
+                    print("Updating next hop")
+                    distances[j] = new_distance
+                    next_hop[j] = current_node
+                    print(current_node)
+                    
+            else:
+                print("ELSE ", i)
+                next_hop[i] = i
+                
+    
+    # Return the list of the shortest distances to all nodes
+    return distances,next_hop
+
+def dijkstra(graph, start_node):
+    num_nodes = len(graph)
+
+    distances = {node: float('inf') for node in range(num_nodes)}
+    paths = {node: [] for node in range(num_nodes)}
+    next_hop = {node: -1 for node in range(num_nodes)}
+    visited = set()
+    next_hop[start_node] = 0
+
+    distances[start_node] = 0
+
+    priority_queue = [(0, start_node)]
+
+    while priority_queue:
+        current_distance, current_node = heapq.heappop(priority_queue)
+
+        if current_node in visited:
+            continue
+
+        visited.add(current_node)
+
+        for neighbor, weight in enumerate(graph[current_node]):
+            if weight != 0 and neighbor not in visited:
+                new_distance = distances[current_node] + weight
+
+                if new_distance < distances[neighbor]:
+                    distances[neighbor] = new_distance
+                    paths[neighbor] = paths[current_node] + [current_node]
+                    next_hop[neighbor] = current_node
+                    heapq.heappush(priority_queue, (new_distance, neighbor))
+
+    return distances, paths, next_hop
+
+def create_routing_table(d,graph,num_switches):
+    '''create_routing_table returns a list of the format of a nested list.
+    For the parameter "routing_table", it should be a list of lists in the form 
+    of [[...], [...], ...]. Within each list in the outermost list, 
+    the first element is <Switch ID>. The second is <Dest ID>, 
+    and the third is <Next Hop>, and the fourth is <Shortest distance>'''
+    routing_table = []
+    
+    for i in range(num_switches):
+        
+        distances, paths, next_hop = dijkstra(graph, i)
+        
+        for key,value in distances.items():
+            
+            l = [i] # first element of the list is Switch_ID
+            l.append(key) # second element of the list is Destination_ID
+            
+            # third element of list is the Next Hop
+            if next_hop[key] == i:
+                l.append(key)
+            else:
+                l.append(next_hop[key])
+            
+            l.append(distances[key]) # fourth element of the list is Shortest Distance
+            routing_table.append(l)
+    
+    return routing_table
 
 def generate_response_msg(connected_switches,num_switches):
     '''connected_switches is a dictionary where the Key=switch_id and 
@@ -168,62 +305,6 @@ def send_message(socket, connected_switches, message):
         socket.sendto(message, switch_addr)
         register_response_sent(switch_id)
         print(f'Sent message to switch#{switch_id} @ {switch_addr}')
-
-
-def min_distance(distances, visited):
-    '''Function to find the node with the smallest distance that has not been 
-    visited yet'''
-    # Initialize minimum distance for next node
-    min_val = float('inf')
-    min_index = -1
-
-    # Loop through all nodes to find minimum distance
-    for i in range(len(distances)):
-        if distances[i] < min_val and i not in visited:
-            min_val = distances[i]
-            min_index = i
-
-    return min_index
-
-def dijkstra_algorithm(graph, start_node):
-    '''Implement Dijkstra's algorithm'''
-
-    # Get total number of nodes in the graph
-    num_nodes = len(graph)
-
-    # Initialize distance and visited arrays
-    distances = [float('inf')] * num_nodes
-    visited = []
-
-    # Set distance at starting node to 0 and add to visited list 
-    distances[start_node] = 0
-
-    # Loop through all nodes to find shortest path to each node
-    for i in range(num_nodes):
-
-        # Find minimum distance node that has not been visited yet
-        current_node = min_distance(distances, visited)
-
-        # Add current_node to list of visited nodes
-        visited.append(current_node)
-
-        # Loop through all neighboring nodes of current_node 
-        for j in range(num_nodes):
-
-            # Check if there is an edge from current_node to neighbor
-            if graph[current_node][j] != 0:
-
-                # Calculate the distance from start_node to neighbor, 
-                # passing through current_node
-                new_distance = distances[current_node] + graph[current_node][j]
-
-                # Update the distance if it is less than previous recorded value 
-                if new_distance < distances[j]:
-                    distances[j] = new_distance
-
-    # Return the list of the shortest distances to all nodes
-    return distances
-    
 
 def main():
     #Check for number of arguments and exit if host/port not provided
@@ -271,42 +352,18 @@ def main():
     # Send Register Response
     response_msg = generate_response_msg(connected_switches,num_switches)
     send_message(controller_socket, connected_switches, response_msg)
-    
 
 
 
 if __name__ == "__main__":
     # main()
     
-    config_file = 'Config/graph_3.txt'
-    
-    d = {}
-    
-    with open(config_file, 'r') as f:
-        f = f.readlines()
-        num_switches = int(f[0])
-        
-        
-        
-        # Create initial empty dictionary where link cost is zero for self and 
-        # 9999 otherwise
-        for self_id in range(num_switches):
-            d[self_id] = {}
-            for neighbor_id in range(num_switches):
-                if neighbor_id == self_id:
-                    cost = 0
-                else:
-                    cost = 9999
-                d[self_id][neighbor_id] = cost
+    config_file = 'Config/graph_6.txt'
 
-        # Now update each cost based on the config file
-        for line in f[1:]:
-            line = line.split()
-            self_id = int(line[0])
-            neighbor_id = int(line[1])
-            cost = int(line[2])
-            
-            # Update values
-            d[self_id][neighbor_id] = cost
-            d[neighbor_id][self_id] = cost
-            
+    d,num_switches = open_file(config_file)
+    graph = create_graph(d)
+    
+    distances, paths, next_hop = dijkstra(graph, 0)
+
+    routing_table = create_routing_table(d,graph,num_switches)
+                
