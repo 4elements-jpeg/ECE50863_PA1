@@ -9,6 +9,16 @@ Last Modified Date: December 9th, 2021
 import sys
 from datetime import date, datetime
 import socket
+import pickle
+import signal
+import time
+import threading
+
+def handler(signum, frame):
+    res = input("Ctrl-c was pressed. Do you really want to exit? y/n ")
+    # if res == 'y':
+    exit(1)
+signal.signal(signal.SIGINT, handler)
 
 # Please do not modify the name of the log file, otherwise you will lose points because the grader won't be able to find your log file
 LOG_FILE = "switch#.log" # The log file for switches are switch#.log, where # is the id of that switch (i.e. switch0.log, switch1.log). The code for replacing # with a real number has been given to you in the main function.
@@ -88,6 +98,110 @@ def write_to_log(log):
         # Write to log
         log_file.writelines(log)
         
+        
+class Switch:
+    def __init__(self, switch_id, controller_addr):
+        print(f'Creating switch with ID = {switch_id}')
+        self.switch_id = int(switch_id)
+        self.controller_addr = controller_addr
+        self.live_neighbors = set()
+        self.neighbor_statuses = {}
+        self.connected_switches = {}
+        self.routing_table = {}
+        self.K = 2
+        self.TIMEOUT = 3 * self.K
+        self.switch_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    
+    
+    def send_register_request(self):
+        # Send Register REQUESTS
+        msg = ['Register_Request',self.switch_id]
+        data = pickle.dumps(msg)
+        self.switch_socket.sendto(data, self.controller_addr)
+        register_request_sent()
+        print('Switch sent register request to the controller')
+    
+    
+    def send_keep_alive(self):
+        '''This function is used to send a Keep_Alive message to each of the 
+        neighboring switches it thinks is alive every K seconds.'''
+        msg = ['Keep_Alive',self.switch_id]
+        data = pickle.dumps(msg)
+        while True:
+            time.sleep(self.K)
+            for neighbor in self.live_neighbors:
+                if self.switch_id != neighbor:
+                    self.switch_socket.sendto(data, self.connected_switches[neighbor])
+                    print(f'Switch {self.switch_id} sending Keep_Alive to switch {self.connected_switches[neighbor]}')
+
+
+    def send_topology_update(self):
+        '''This function is used to send a Topology_Update message to the 
+        controller every K seconds. The Topology Update message includes a set 
+        of live neighbors.'''
+        while True:
+            time.sleep(self.K)
+            msg = ['Topology_Update',self.switch_id,self.neighbor_statuses]
+            data = pickle.dumps(msg)
+            self.switch_socket.sendto(data,self.controller_addr)
+            print(f'Switch {self.switch_id} sending Topology_Update to controller')
+            print(f'Neighbor Statuses = {self.neighbor_statuses}')
+                
+            
+    def handle_timeout(self,neighbor):
+        while True:
+            time.sleep(self.TIMEOUT)
+            # Simulate checking for timeout
+            if self.neighbor_statuses.get(neighbor, 0) < time.time() - self.TIMEOUT:
+                neighbor_dead(neighbor)
+                print(f"Timeout for Switch {neighbor} detected by Switch {self.switch_id}")
+                # Mark the neighbor as down, update topology, and notify the controller
+                self.live_neighbors.discard(neighbor)
+                self.neighbor_statuses[neighbor] = False
+                self.send_topology_update()
+    
+    def handle_recv_message(self,recvd_data, recvd_addr):
+        # Check if the recvd addr is from the controller
+        recvd_msg =  pickle.loads(recvd_data)
+        
+        request_type = recvd_msg[0]
+        msg = recvd_msg[1]
+        print(msg)
+        
+        if request_type == 'Register_Response':
+            register_response_received()
+            
+            for line in msg.split('\n')[1:]:
+                l = line.split()
+                if l:
+                    neighbor_id, addr, port = l
+                    neighbor_id = int(neighbor_id)
+                    self.connected_switches[neighbor_id] = (addr, port)
+                    self.live_neighbors.add(neighbor_id)
+                    self.neighbor_statuses[neighbor_id] = True
+            print('Register Response')
+            print(f'Connected Switches = {self.connected_switches}')
+            print(f'Live Neighbors = {self.live_neighbors}')
+            print(f'Neighbor Statuses = {self.neighbor_statuses}')
+                
+        elif request_type == 'Routing_Update':
+            routing_table_update(msg)
+            self.routing_table = msg
+            print(f'Routing_Update = {self.routing_table}')
+            
+        # if a switch receives a keep alive message from a switch it previously 
+        # considered unreachable it updates the host/post info and sends a 
+        # topology update to the controller
+        elif (request_type == 'Keep_Alive'):
+            neighbor_id = int(msg)
+            if neighbor_id not in self.live_neighbors:
+                print(f'neighbor {neighbor_id} is alive again')
+                neighbor_alive(neighbor_id)
+                self.connected_switches[neighbor_id] = recvd_addr
+                self.live_neighbors.add(neighbor_id)
+                self.neighbor_statuses[neighbor_id] = time.time()
+                self.send_topology_update()
+
 
 def main():
 
@@ -104,6 +218,7 @@ def main():
 
     # Write your code below or elsewhere in this file
     # run on computer from cmd line by python -m switch arguements...
+    
     controller_hostname = sys.argv[2]
     controller_port = int(sys.argv[3])
     controller_addr = (controller_hostname, controller_port)
@@ -115,23 +230,16 @@ def main():
         if arg == '-f':
             flag1 = True
             neighbor_id = int(sys.argv[-1])
+    
+    switch = Switch(my_id,controller_addr)
+    switch.send_register_request()
+    
+    while True:
+        print("\nWaiting for client...")
+        recvd_data, controller_addr = switch.switch_socket.recvfrom(1024)
+        switch.handle_recv_message(recvd_data, controller_addr)
+        print(switch.__dict__)
 
-    switch_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    
-    # Send Register REQUESTS
-    msg = f"{my_id} Register_Request".encode(encoding='UTF-8')
-    switch_socket.sendto(msg, controller_addr)
-    register_request_sent()
-    print(f'Switch {msg}')
-    
-    
-    # Receive Register RESPONSE
-    (data, controller_addr) = switch_socket.recvfrom(1024)
-    register_response_received()
-    
-    
-    print(f'Received message from {controller_addr}')
-    print(data.decode(encoding='UTF-8'))
 
 if __name__ == "__main__":
     main()
