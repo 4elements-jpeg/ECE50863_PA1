@@ -105,6 +105,7 @@ class Switch:
         self.switch_id = int(switch_id)
         self.controller_addr = controller_addr
         self.live_neighbors = set()
+        self.neighbor_state = {}
         self.neighbor_statuses = {}
         self.connected_switches = {}
         self.routing_table = {}
@@ -141,7 +142,7 @@ class Switch:
         of live neighbors.'''
         while True:
             time.sleep(self.K)
-            msg = ['Topology_Update',self.switch_id,self.neighbor_statuses]
+            msg = ['Topology_Update',self.switch_id,self.neighbor_state]
             data = pickle.dumps(msg)
             self.switch_socket.sendto(data,self.controller_addr)
             print(f'Switch {self.switch_id} sending Topology_Update to controller')
@@ -157,7 +158,7 @@ class Switch:
                 print(f"Timeout for Switch {neighbor} detected by Switch {self.switch_id}")
                 # Mark the neighbor as down, update topology, and notify the controller
                 self.live_neighbors.discard(neighbor)
-                self.neighbor_statuses[neighbor] = False
+                self.neighbor_state = False
                 self.send_topology_update()
     
     def handle_recv_message(self,recvd_data, recvd_addr):
@@ -178,7 +179,8 @@ class Switch:
                     neighbor_id = int(neighbor_id)
                     self.connected_switches[neighbor_id] = (addr, port)
                     self.live_neighbors.add(neighbor_id)
-                    self.neighbor_statuses[neighbor_id] = True
+                    self.neighbor_statuses[neighbor_id] = time.time()
+                    self.neighbor_state[neighbor_id] = True
             print('Register Response')
             print(f'Connected Switches = {self.connected_switches}')
             print(f'Live Neighbors = {self.live_neighbors}')
@@ -198,6 +200,7 @@ class Switch:
                 print(f'neighbor {neighbor_id} is alive again')
                 neighbor_alive(neighbor_id)
                 self.connected_switches[neighbor_id] = recvd_addr
+                self.neighbor_state[neighbor_id] = True
                 self.live_neighbors.add(neighbor_id)
                 self.neighbor_statuses[neighbor_id] = time.time()
                 self.send_topology_update()
@@ -209,17 +212,15 @@ class Switch:
         while True:
             recvd_data, addr = self.switch_socket.recvfrom(1024)
             self.handle_recv_message(recvd_data, addr)
-            
                 
                 
     def run(self):
         # Start threads for Keep Alive, Topology Update, and Timeout Handling
-        threading.Thread(target=self.receive_messages, daemon=True).start()
+        threading.Thread(target=self.receive_messages, args=(), daemon=False).start()
         
-        threading.Thread(target=self.send_keep_alive, daemon=True).start()
-        # threading.Thread(target=self.handle_timeout, daemon=True).start()
-
-        threading.Thread(target=self.send_topology_update, daemon=True).start()
+        threading.Thread(target=self.send_keep_alive, daemon=False).start()
+        threading.Thread(target=self.handle_timeout, daemon=False).start()
+        threading.Thread(target=self.send_topology_update, daemon=False).start()
             
 
 
