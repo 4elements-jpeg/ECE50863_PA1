@@ -130,7 +130,8 @@ class Switch:
         data = pickle.dumps(msg)
         while True:
             time.sleep(self.K)
-            for neighbor in self.live_neighbors:
+            self.neighbor_statuses[self.switch_id] = time.time()
+            for neighbor in self.live_neighbors.copy():
                 if self.switch_id != neighbor:
                     self.switch_socket.sendto(data, self.connected_switches[neighbor])
                     print(f'Switch {self.switch_id} sending Keep_Alive to switch {self.connected_switches[neighbor]}')
@@ -142,23 +143,27 @@ class Switch:
         of live neighbors.'''
         while True:
             time.sleep(self.K)
-            msg = ['Topology_Update',self.switch_id,self.neighbor_state]
+            msg = ['Topology_Update',self.switch_id,self.neighbor_state,self.neighbor_statuses]
             data = pickle.dumps(msg)
             self.switch_socket.sendto(data,self.controller_addr)
             print(f'Switch {self.switch_id} sending Topology_Update to controller')
             print(f'Neighbor Statuses = {self.neighbor_statuses}')
                 
             
-    def handle_timeout(self,neighbor):
+    def handle_timeout(self):
         while True:
             time.sleep(self.TIMEOUT)
             # Simulate checking for timeout
-            if self.neighbor_statuses.get(neighbor, 0) < time.time() - self.TIMEOUT:
-                neighbor_dead(neighbor)
-                print(f"Timeout for Switch {neighbor} detected by Switch {self.switch_id}")
-                # Mark the neighbor as down, update topology, and notify the controller
-                self.live_neighbors.discard(neighbor)
-                self.neighbor_state = False
+            boolean = False
+            for neighbor in self.live_neighbors.copy():
+                if self.neighbor_statuses.get(neighbor) < time.time() - self.TIMEOUT:
+                    neighbor_dead(neighbor)
+                    print(f"Timeout for Switch {neighbor} detected by Switch {self.switch_id}")
+                    # Mark the neighbor as down, update topology, and notify the controller
+                    self.live_neighbors.discard(neighbor)
+                    self.neighbor_state = False
+                    boolean = True
+            if boolean == True:
                 self.send_topology_update()
     
     def handle_recv_message(self,recvd_data, recvd_addr):
@@ -177,35 +182,38 @@ class Switch:
                 if l:
                     neighbor_id, addr, port = l
                     neighbor_id = int(neighbor_id)
+                    port = int(port)
                     self.connected_switches[neighbor_id] = (addr, port)
                     self.live_neighbors.add(neighbor_id)
                     self.neighbor_statuses[neighbor_id] = time.time()
                     self.neighbor_state[neighbor_id] = True
-            print('Register Response')
-            print(f'Connected Switches = {self.connected_switches}')
-            print(f'Live Neighbors = {self.live_neighbors}')
-            print(f'Neighbor Statuses = {self.neighbor_statuses}')
+            # print('Register Response')
+            # print(f'Connected Switches = {self.connected_switches}')
+            # print(f'Live Neighbors = {self.live_neighbors}')
+            # print(f'Neighbor Statuses = {self.neighbor_statuses}')
                 
         elif request_type == 'Routing_Update':
             routing_table_update(msg)
             self.routing_table = msg
-            print(f'Routing_Update = {self.routing_table}')
+            # print(f'Routing_Update = {self.routing_table}')
             
         # if a switch receives a keep alive message from a switch it previously 
         # considered unreachable it updates the host/post info and sends a 
         # topology update to the controller
         elif (request_type == 'Keep_Alive'):
             neighbor_id = int(msg)
-            if neighbor_id not in self.live_neighbors:
+            if neighbor_id not in self.live_neighbors.copy():
                 print(f'neighbor {neighbor_id} is alive again')
                 neighbor_alive(neighbor_id)
+                hostname, port = recvd_addr
+                port = int(port)
+                addr = (hostname,port)
                 self.connected_switches[neighbor_id] = recvd_addr
                 self.neighbor_state[neighbor_id] = True
                 self.live_neighbors.add(neighbor_id)
                 self.neighbor_statuses[neighbor_id] = time.time()
                 self.send_topology_update()
             else:
-                self.connected_switches[neighbor_id] = recvd_addr
                 self.neighbor_statuses[neighbor_id] = time.time()
                 
     def receive_messages(self):
@@ -265,3 +273,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+    # switch = Switch(0,('USMCDWNCAD6MLXY',1024))
+    # switch = Switch(1,('USMCDWNCAD6MLXY',1024))
+    
+    # switch.neighbor_statuses[1] = time.time()
+    # print(time.time())
+    
+    # print(switch.neighbor_statuses.get(1) < time.time() - switch.TIMEOUT)
