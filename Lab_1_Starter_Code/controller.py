@@ -269,7 +269,7 @@ class Controller:
         print(f'Creating controller with port number {controller_port}')
         self.controller_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.controller_hostname = socket.gethostname()
-        self.controller_port = controller_port
+        self.controller_port = int(controller_port)
         self.controller_addr = (self.controller_hostname,self.controller_port)
         self.controller_socket.bind(self.controller_addr)
         
@@ -370,7 +370,9 @@ class Controller:
         # Handle Register Request from a switch that was previosly offline
         print(f"Controller received Register Request from Switch {switch_id}")
         
-        self.switch_addresses[switch_id] = recvd_addr
+        hostname, port = recvd_addr
+        port = int(port)
+        self.switch_addresses[switch_id] = (hostname, port)
         self.switch_statuses[switch_id] = time.time()
         self.live_switches.add(switch_id)
         self.switch_addresses = dict(sorted(self.switch_addresses.items()))
@@ -392,7 +394,9 @@ class Controller:
             
             if request_type == 'Register_Request':
                 print(f'Received {request_type} from switch {switch_id}')
-                self.switch_addresses[switch_id] = switch_addr
+                hostname, port = switch_addr
+                port = int(port)
+                self.switch_addresses[switch_id] = (hostname, port)
                 self.switch_statuses[switch_id] = time.time()
                 self.live_switches.add(switch_id)
                 register_request_received(switch_id)
@@ -417,13 +421,14 @@ class Controller:
         print('---Exit-- wait_for_switches_to_come_online()')
 
         
-    def handle_topology_update(self,switch_id,neighbor_state): 
+    def handle_topology_update(self,switch_id,neighbor_state,neighbor_status): 
         while True:
             print(f"Controller received Topology Update from Switch {switch_id}")
             
             # First update switch statuses from neighbor statuses
-            for key,value in neighbor_state:
+            for key,value in neighbor_state.items():
                 if value == True:
+                    self.switch_statuses[key] = time.time()
                     continue
                 elif value == False:
                     self.live_switches.discard(key)
@@ -433,11 +438,11 @@ class Controller:
             self.switch_statuses[switch_id] = time.time()
             
             # Check if timeout
-            for switch_id,value in self.switch_statuses:
+            for switch,value in self.switch_statuses.items():
                 if value  < time.time() - self.TIMEOUT:
                     print('Switch {switch_id} is dead')
-                    self.live_switches.discard(switch_id)
-                    topology_update_switch_dead(switch_id)
+                    self.live_switches.discard(switch)
+                    topology_update_switch_dead(switch)
     
                     # Perform recomputation of paths and send Route Update message
                     self.recompute_paths_and_send_update()
@@ -454,7 +459,8 @@ class Controller:
             updates its topology to reflect that link as unusable.'''
             switch_id = int(recvd_msg[1])
             neighbor_state = recvd_msg[2]
-            self.handle_topology_update(switch_id,neighbor_state)
+            neighbor_status = recvd_msg[2]
+            self.handle_topology_update(switch_id,neighbor_state,neighbor_status)
         
         elif request_type == 'Register_Request':
             '''If a controller receives a Register Request message from a switch 
