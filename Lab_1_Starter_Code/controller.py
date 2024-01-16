@@ -172,24 +172,26 @@ def min_distance(distances, visited):
 def dijkstra(graph, live_switches, start_node):
     num_nodes = len(graph)
 
-    distances = {node: float('inf') for node in range(num_nodes)}
+    distances = {node: int(9999) for node in range(num_nodes)}
     paths = {node: [] for node in range(num_nodes)}
     next_hop = {node: -1 for node in range(num_nodes)}
     visited = set()
-    next_hop[start_node] = start_node
-
-    distances[start_node] = 0
+    
+    if start_node in live_switches:
+        next_hop[start_node] = start_node
+        distances[start_node] = 0
+    else:
+        next_hop[start_node] = -1
+        distances[start_node] = 9999
 
     priority_queue = [(0, start_node)]
 
     while priority_queue:
         current_distance, current_node = heapq.heappop(priority_queue)
-
-        if current_node in visited:
+        if current_node not in live_switches:
             continue
         
-        if current_node not in live_switches:
-            print(priority_queue)
+        elif current_node in visited:
             continue
 
         visited.add(current_node)
@@ -300,9 +302,9 @@ class Controller:
         of [[...], [...], ...]. Within each list in the outermost list, 
         the first element is <Switch ID>. The second is <Dest ID>, 
         and the third is <Next Hop>, and the fourth is <Shortest distance>'''
-        self.routing_table = []
+        routing_table = []
         
-        for node in self.live_switches:
+        for node in range(len(self.graph)):
             
             print("NODE ",node)
             distances, paths, next_hop = dijkstra(self.graph, self.live_switches, node)
@@ -316,83 +318,56 @@ class Controller:
                 hop = None
                 shortest_distance = distances[key]
                 
-                # Node is itself
-                if paths[key] == []:
-                    print("Empty LIST")
-                    hop = node
-                # Next path is 
-                elif shortest_distance == 9999:
-                    hop = -1
-                elif len(paths[key]) == 1:
-                    hop = key
+                # If the key (ie. node #n is in live switches act normally)
+                if key in self.live_switches:
+                    # Node is itself
+                    if paths[key] == []:
+                        print("Empty LIST")
+                        hop = node
+                    # Next path is 
+                    elif shortest_distance == 9999:
+                        hop = -1
+                    elif len(paths[key]) == 1:
+                        hop = key
+                    else:
+                        hop = paths[key][1]
+                        
+                # If the key (ie. node #n is not in live switches assign hop = -1 and distance to inf)      
                 else:
-                    hop = paths[key][1]
-                    
-                
-                l = [switch_id] # first element of the list is Switch_ID
-                l.append(dest_id) # second element of the list is Destination_ID
-                l.append(hop)
-                l.append(shortest_distance) # fourth element of the list is Shortest Distance
-                self.routing_table.append(l)
-                
-    def recompute_routing_table(self):
-        for node in self.live_switches:
-            
-            print("NODE ",node)
-            distances, paths, next_hop = dijkstra(self.graph, self.live_switches, node)
-            
-            print(f'DISTANCES = {distances}')
-            print(f'PATHS = {paths}')
-            print(f'NEXT_HOP = {next_hop}')
-            for key,value in distances.items():
-                switch_id = node
-                dest_id = key
-                hop = None
-                shortest_distance = distances[key]
-                
-                # Node is itself
-                if paths[key] == []:
-                    print("Empty LIST")
-                    hop = node
-                # Next path is 
-                elif shortest_distance == 9999:
                     hop = -1
-                elif len(paths[key]) == 1:
-                    hop = key
-                else:
-                    hop = paths[key][1]
-                    
-                
-                l = [switch_id] # first element of the list is Switch_ID
-                l.append(dest_id) # second element of the list is Destination_ID
-                l.append(hop)
-                l.append(shortest_distance) # fourth element of the list is Shortest Distance
-                self.routing_table.append(l)
+                    shortest_distance = 9999
+                        
+                # only create routing table for live switches
+                if node in self.live_switches:
+                    l = [switch_id] # first element of the list is Switch_ID
+                    l.append(dest_id) # second element of the list is Destination_ID
+                    l.append(hop)
+                    l.append(shortest_distance) # fourth element of the list is Shortest Distance
+                    routing_table.append(l)
+        self.routing_table = routing_table
         
     def recompute_paths_and_send_update(self):
-        print("Controller recomputes paths and sends Route Update to all online switches")
-    
+        print("Controller recompute_paths_and_send_update()")
+        self.create_routing_table()
+        
         # LOG - Routing Table
         routing_table_update(self.routing_table)
         # Send Routing Table
         routing_table_msg = generate_routing_table_msg(self.routing_table)
         for switch_id in self.live_switches:
-            addr = self.switch_addresses[switch_id]
-            
-            switch_routing_table = ['Routing_Update']
+            l = []
             for entry in self.routing_table:
                 if entry[0] == switch_id:
                     l.append(entry[0:3])
-            switch_routing_table.append(l)
-            message = pickle.dumps(switch_routing_table) # Pickle Message to be sent
-            
-            self.controller_socket.sendto(message, addr)
+            routing_table_msg = generate_routing_table_msg(l)
+            message = pickle.dumps(routing_table_msg) # Pickle Message to be sent
+            self.controller_socket.sendto(message, self.switch_addresses[switch_id])
             
         
         print(f'Sent routing table {routing_table_msg}')
         
     def handle_register_request(self, switch_id, recvd_addr):
-        # Simulate receiving Register Request message from a switch
+        # Handle Register Request from a switch that was previosly offline
         print(f"Controller received Register Request from Switch {switch_id}")
         
         self.switch_addresses[switch_id] = recvd_addr
@@ -442,12 +417,18 @@ class Controller:
         print('---Exit-- wait_for_switches_to_come_online()')
 
         
-    def handle_topology_update(self,switch_id,neighbor_statuses): 
+    def handle_topology_update(self,switch_id,neighbor_state): 
         while True:
             print(f"Controller received Topology Update from Switch {switch_id}")
+            
             # First update switch statuses from neighbor statuses
-            for key,value in neighbor_statuses:
-                self.switch_statuses[key] = value
+            for key,value in neighbor_state:
+                if value == True:
+                    continue
+                elif value == False:
+                    self.live_switches.discard(key)
+                    topology_update_switch_dead(switch_id)
+                    self.recompute_paths_and_send_update()
                 
             self.switch_statuses[switch_id] = time.time()
             
@@ -466,13 +447,14 @@ class Controller:
         recvd_msg =  pickle.loads(recvd_data)
         request_type = recvd_msg[0]
         
+        print(f'Recevied a {request_type} from {recvd_addr}')
         if request_type == 'Topology_Update':
             '''If a controller receives a Topology Update message from a switch 
             that indicates a neighbor is no longer reachable, then the controller 
             updates its topology to reflect that link as unusable.'''
             switch_id = int(recvd_msg[1])
-            neighbor_statuses = recvd_msg[2]
-            self.handle_topology_update(switch_id,neighbor_statuses)
+            neighbor_state = recvd_msg[2]
+            self.handle_topology_update(switch_id,neighbor_state)
         
         elif request_type == 'Register_Request':
             '''If a controller receives a Register Request message from a switch 
@@ -483,14 +465,13 @@ class Controller:
         
     def receive_messages(self):
         while True:
+            print('Waiting for Message..')
             recvd_data, addr = self.controller_socket.recvfrom(1024)
             self.handle_recv_message(recvd_data, addr)
     
     def run(self):
         # Start threads for Keep Alive, Topology Update, and Timeout Handling
-        threading.Thread(target=self.receive_messages, daemon=True).start()
-        
-        # threading.Thread(target=self.handle_topology_update, daemon=True).start()
+        threading.Thread(target=self.receive_messages, args=(), daemon=False).start()
         
 
 def main():
@@ -509,23 +490,23 @@ def main():
     
     controller.run()
     
-    # while True:
-    #     recvd_data, switch_addr = controller.controller_socket.recvfrom(1024)
-    #     recvd_msg =  pickle.loads(recvd_data)
-    #     print(f"Controller received a message: {recvd_msg}")
-    #     print(f'from switch {switch_addr}')
-    
 
 if __name__ == "__main__":
     main()
     
     # config_file = 'Config/graph_6.txt'
-    # controller = Controller(1077,config_file)
+    # controller = Controller(1088,config_file)
     
     # controller.d,controller.total_num_switches = open_file(controller.config_file)
+    # for i in range(6):
+    #     addr = ('localhost',2222+i)
+    #     controller.handle_register_request(i, addr)
     
     # controller.create_graph()
+    # print(controller.graph)
+    # controller.live_switches.discard(0)
     # controller.create_routing_table()
+    # print(controller.routing_table)
     # # distances, paths, next_hop = dijkstra(controller.graph, controller.live_switches, 0)
 
     
