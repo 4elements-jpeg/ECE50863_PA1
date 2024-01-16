@@ -13,6 +13,7 @@ import heapq
 import pickle
 import signal
 import time
+import threading
 
 def handler(signum, frame):
     res = input("Ctrl-c was pressed. Do you really want to exit? y/n ")
@@ -186,6 +187,10 @@ def dijkstra(graph, live_switches, start_node):
 
         if current_node in visited:
             continue
+        
+        if current_node not in live_switches:
+            print(priority_queue)
+            continue
 
         visited.add(current_node)
 
@@ -329,22 +334,52 @@ class Controller:
                 l.append(hop)
                 l.append(shortest_distance) # fourth element of the list is Shortest Distance
                 self.routing_table.append(l)
+                
+    def recompute_routing_table(self):
+        for node in self.live_switches:
+            
+            print("NODE ",node)
+            distances, paths, next_hop = dijkstra(self.graph, self.live_switches, node)
+            
+            print(f'DISTANCES = {distances}')
+            print(f'PATHS = {paths}')
+            print(f'NEXT_HOP = {next_hop}')
+            for key,value in distances.items():
+                switch_id = node
+                dest_id = key
+                hop = None
+                shortest_distance = distances[key]
+                
+                # Node is itself
+                if paths[key] == []:
+                    print("Empty LIST")
+                    hop = node
+                # Next path is 
+                elif shortest_distance == 9999:
+                    hop = -1
+                elif len(paths[key]) == 1:
+                    hop = key
+                else:
+                    hop = paths[key][1]
+                    
+                
+                l = [switch_id] # first element of the list is Switch_ID
+                l.append(dest_id) # second element of the list is Destination_ID
+                l.append(hop)
+                l.append(shortest_distance) # fourth element of the list is Shortest Distance
+                self.routing_table.append(l)
         
     def recompute_paths_and_send_update(self):
         print("Controller recomputes paths and sends Route Update to all online switches")
-            
-        self.create_graph()
-        self.create_routing_table()
+    
         # LOG - Routing Table
         routing_table_update(self.routing_table)
-        
         # Send Routing Table
         routing_table_msg = generate_routing_table_msg(self.routing_table)
         for switch_id in self.live_switches:
             addr = self.switch_addresses[switch_id]
             
             switch_routing_table = ['Routing_Update']
-            l = []
             for entry in self.routing_table:
                 if entry[0] == switch_id:
                     l.append(entry[0:3])
@@ -408,23 +443,24 @@ class Controller:
 
         
     def handle_topology_update(self,switch_id,neighbor_statuses): 
-        print(f"Controller received Topology Update from Switch {switch_id}")
-        # First update switch statuses from neighbor statuses
-        for key,value in neighbor_statuses:
-            self.switch_statuses[key] = value
+        while True:
+            print(f"Controller received Topology Update from Switch {switch_id}")
+            # First update switch statuses from neighbor statuses
+            for key,value in neighbor_statuses:
+                self.switch_statuses[key] = value
+                
+            self.switch_statuses[switch_id] = time.time()
             
-        self.switch_statuses[switch_id] = time.time()
-        
-        # Check if timeout
-        for switch_id,value in self.switch_statuses:
-            if value  < time.time() - self.TIMEOUT:
-                print('Switch {switch_id} is dead')
-                self.live_switches.discard(switch_id)
-                topology_update_switch_dead(switch_id)
-
-        # Perform recomputation of paths and send Route Update message
-        self.recompute_paths_and_send_update()
-        
+            # Check if timeout
+            for switch_id,value in self.switch_statuses:
+                if value  < time.time() - self.TIMEOUT:
+                    print('Switch {switch_id} is dead')
+                    self.live_switches.discard(switch_id)
+                    topology_update_switch_dead(switch_id)
+    
+                    # Perform recomputation of paths and send Route Update message
+                    self.recompute_paths_and_send_update()
+                
     
     def handle_recv_message(self, recvd_data, recvd_addr):
         recvd_msg =  pickle.loads(recvd_data)
@@ -443,7 +479,18 @@ class Controller:
             it previously considered as ‘dead’, then it responds appropriately 
             and marks it as ‘alive’.'''
             switch_id = int(recvd_msg[1])
-            pass
+            self.handle_register_request(switch_id, recvd_addr)
+        
+    def receive_messages(self):
+        while True:
+            recvd_data, addr = self.controller_socket.recvfrom(1024)
+            self.handle_recv_message(recvd_data, addr)
+    
+    def run(self):
+        # Start threads for Keep Alive, Topology Update, and Timeout Handling
+        threading.Thread(target=self.receive_messages, daemon=True).start()
+        
+        # threading.Thread(target=self.handle_topology_update, daemon=True).start()
         
 
 def main():
@@ -459,6 +506,14 @@ def main():
     
     controller = Controller(controller_port,config_file)
     controller.wait_for_switches_to_come_online()
+    
+    controller.run()
+    
+    # while True:
+    #     recvd_data, switch_addr = controller.controller_socket.recvfrom(1024)
+    #     recvd_msg =  pickle.loads(recvd_data)
+    #     print(f"Controller received a message: {recvd_msg}")
+    #     print(f'from switch {switch_addr}')
     
 
 if __name__ == "__main__":

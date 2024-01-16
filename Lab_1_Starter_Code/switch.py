@@ -201,6 +201,26 @@ class Switch:
                 self.live_neighbors.add(neighbor_id)
                 self.neighbor_statuses[neighbor_id] = time.time()
                 self.send_topology_update()
+            else:
+                self.connected_switches[neighbor_id] = recvd_addr
+                self.neighbor_statuses[neighbor_id] = time.time()
+                
+    def receive_messages(self):
+        while True:
+            recvd_data, addr = self.switch_socket.recvfrom(1024)
+            self.handle_recv_message(recvd_data, addr)
+            
+                
+                
+    def run(self):
+        # Start threads for Keep Alive, Topology Update, and Timeout Handling
+        threading.Thread(target=self.receive_messages, daemon=True).start()
+        
+        threading.Thread(target=self.send_keep_alive, daemon=True).start()
+        # threading.Thread(target=self.handle_timeout, daemon=True).start()
+
+        threading.Thread(target=self.send_topology_update, daemon=True).start()
+            
 
 
 def main():
@@ -233,12 +253,13 @@ def main():
     
     switch = Switch(my_id,controller_addr)
     switch.send_register_request()
+    print("\nWaiting for response from controller...")
+    recvd_data, controller_addr = switch.switch_socket.recvfrom(1024)
+    switch.handle_recv_message(recvd_data, controller_addr)
+    print('---> Received response from controller')
     
-    while True:
-        print("\nWaiting for client...")
-        recvd_data, controller_addr = switch.switch_socket.recvfrom(1024)
-        switch.handle_recv_message(recvd_data, controller_addr)
-        print(switch.__dict__)
+    print('Starting Threading')
+    switch.run()
 
 
 if __name__ == "__main__":
