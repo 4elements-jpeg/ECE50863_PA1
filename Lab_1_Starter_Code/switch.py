@@ -161,10 +161,11 @@ class Switch:
                     print(f"Timeout for Switch {neighbor} detected by Switch {self.switch_id}")
                     # Mark the neighbor as down, update topology, and notify the controller
                     self.live_neighbors.discard(neighbor)
-                    self.neighbor_state = False
+                    self.neighbor_state[neighbor] = False
                     boolean = True
             if boolean == True:
                 self.send_topology_update()
+                boolean == False
     
     def handle_recv_message(self,recvd_data, recvd_addr):
         # Check if the recvd addr is from the controller
@@ -175,6 +176,7 @@ class Switch:
         print(msg)
         
         if request_type == 'Register_Response':
+            print('Received Register_Response')
             register_response_received()
             
             for line in msg.split('\n')[1:]:
@@ -193,6 +195,7 @@ class Switch:
             # print(f'Neighbor Statuses = {self.neighbor_statuses}')
                 
         elif request_type == 'Routing_Update':
+            print('Received Routing_Update')
             routing_table_update(msg)
             self.routing_table = msg
             # print(f'Routing_Update = {self.routing_table}')
@@ -202,6 +205,7 @@ class Switch:
         # topology update to the controller
         elif (request_type == 'Keep_Alive'):
             neighbor_id = int(msg)
+            print(f'Received Keep_Alive from switch {neighbor_id}')
             if neighbor_id not in self.live_neighbors.copy():
                 print(f'neighbor {neighbor_id} is alive again')
                 neighbor_alive(neighbor_id)
