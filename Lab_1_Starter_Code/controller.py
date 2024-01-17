@@ -422,30 +422,31 @@ class Controller:
 
         
     def handle_topology_update(self,switch_id,neighbor_state,neighbor_status): 
-        while True:
-            print(f"Controller received Topology Update from Switch {switch_id}")
+        print(f"Controller received Topology Update from Switch {switch_id}")
             
-            # First update switch statuses from neighbor statuses
-            for key,value in neighbor_state.items():
-                if value == True:
-                    self.switch_statuses[key] = time.time()
-                    continue
-                elif value == False:
-                    self.live_switches.discard(key)
-                    topology_update_switch_dead(switch_id)
-                    self.recompute_paths_and_send_update()
-                
-            self.switch_statuses[switch_id] = time.time()
+        print(f'Neighbor State = {neighbor_state}')
+        print(f'Neighbor Status = {neighbor_status}')
+        # First update switch statuses from neighbor statuses
+        for key,value in neighbor_state.items():
+            if value == True:
+                self.switch_statuses[key] = time.time()
+                continue
+            elif value == False:
+                self.live_switches.discard(key)
+                topology_update_switch_dead(switch_id)
+                self.recompute_paths_and_send_update()
             
-            # Check if timeout
-            for switch,value in self.switch_statuses.items():
-                if value  < time.time() - self.TIMEOUT:
-                    print('Switch {switch_id} is dead')
-                    self.live_switches.discard(switch)
-                    topology_update_switch_dead(switch)
-    
-                    # Perform recomputation of paths and send Route Update message
-                    self.recompute_paths_and_send_update()
+        self.switch_statuses[switch_id] = time.time()
+        
+        # Check if timeout
+        for switch,value in self.switch_statuses.items():
+            if value  < time.time() - self.TIMEOUT:
+                print('Switch {switch_id} is dead')
+                self.live_switches.discard(switch)
+                topology_update_switch_dead(switch)
+
+                # Perform recomputation of paths and send Route Update message
+                self.recompute_paths_and_send_update()
                 
     
     def handle_recv_message(self, recvd_data, recvd_addr):
@@ -458,8 +459,8 @@ class Controller:
             that indicates a neighbor is no longer reachable, then the controller 
             updates its topology to reflect that link as unusable.'''
             switch_id = int(recvd_msg[1])
-            neighbor_state = recvd_msg[2]
-            neighbor_status = recvd_msg[2]
+            neighbor_state = recvd_msg[2] # dictionary with key as switch_id and Boolean as values
+            neighbor_status = recvd_msg[3]
             self.handle_topology_update(switch_id,neighbor_state,neighbor_status)
         
         elif request_type == 'Register_Request':
