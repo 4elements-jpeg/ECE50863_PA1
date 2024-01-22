@@ -15,8 +15,9 @@ import time
 import threading
 
 def handler(signum, frame):
-    res = input("Ctrl-c was pressed. Do you really want to exit? y/n ")
+    # res = input("Ctrl-c was pressed. Do you really want to exit? y/n ")
     # if res == 'y':
+    print("Ctrl-c was pressed. Quiting...")
     exit(1)
 signal.signal(signal.SIGINT, handler)
 
@@ -100,7 +101,7 @@ def write_to_log(log):
         
         
 class Switch:
-    def __init__(self, switch_id, controller_addr):
+    def __init__(self, switch_id, controller_addr,failed_neighbor):
         print(f'Creating switch with ID = {switch_id}')
         self.switch_id = int(switch_id)
         self.controller_addr = controller_addr
@@ -109,14 +110,20 @@ class Switch:
         self.neighbor_statuses = {}
         self.connected_switches = {}
         self.routing_table = {}
+        self.failed_neighbor = failed_neighbor
+        self.link_failure = {}
         self.K = 2
         self.TIMEOUT = 3 * self.K
         self.switch_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        
+        self.live_neighbors.discard(self.failed_neighbor)
+        # print(f'Live Neighbors are: {self.live_neighbors}')
+        # print(f'Failed Neighbors are: {self.failed_neighbor}')
     
     
     def send_register_request(self):
         # Send Register REQUESTS
-        msg = ['Register_Request',self.switch_id]
+        msg = ['Register_Request',self.switch_id,self.failed_neighbor]
         data = pickle.dumps(msg)
         self.switch_socket.sendto(data, self.controller_addr)
         register_request_sent()
@@ -132,7 +139,9 @@ class Switch:
             time.sleep(self.K)
             self.neighbor_statuses[self.switch_id] = time.time()
             for neighbor in self.live_neighbors.copy():
-                if self.switch_id != neighbor:
+                print(f'Neighbor = {neighbor} and type = {type(neighbor)}')
+                # if switch is not the same id as itself and neighbor id is not a link failure
+                if (self.switch_id != neighbor) or (self.switch_id == self.link_failure[neighbor]):
                     self.switch_socket.sendto(data, self.connected_switches[neighbor])
                     print(f'Switch {self.switch_id} sending Keep_Alive to switch {self.connected_switches[neighbor]}')
 
@@ -146,8 +155,8 @@ class Switch:
             msg = ['Topology_Update',self.switch_id,self.neighbor_state,self.neighbor_statuses]
             data = pickle.dumps(msg)
             self.switch_socket.sendto(data,self.controller_addr)
-            print(f'Switch {self.switch_id} sending Topology_Update to controller')
-            print(f'Neighbor Statuses = {self.neighbor_statuses}')
+            print(f'{time.time()} -- Switch {self.switch_id} sending Topology_Update to controller.')
+            # print(f'Neighbor Statuses = {self.neighbor_statuses}')
                 
             
     def handle_timeout(self):
@@ -155,8 +164,11 @@ class Switch:
             time.sleep(self.TIMEOUT)
             # Simulate checking for timeout
             boolean = False
+            print()
             for neighbor in self.live_neighbors.copy():
-                if self.neighbor_statuses.get(neighbor) < time.time() - self.TIMEOUT:
+                if (neighbor == self.failed_neighbor) or (self.switch_id == self.link_failure[neighbor]):
+                    print('Timeout for failed neighbor... skipping')
+                elif self.neighbor_statuses.get(neighbor) < time.time() - self.TIMEOUT:
                     neighbor_dead(neighbor)
                     print(f"Timeout for Switch {neighbor} detected by Switch {self.switch_id}")
                     # Mark the neighbor as down, update topology, and notify the controller
@@ -176,23 +188,27 @@ class Switch:
         print(msg)
         
         if request_type == 'Register_Response':
+            link_failure = recvd_msg[2]
             print('Received Register_Response')
             register_response_received()
             
+            self.link_failure = link_failure
+            print(self.link_failure)
             for line in msg.split('\n')[1:]:
                 l = line.split()
                 if l:
                     neighbor_id, addr, port = l
                     neighbor_id = int(neighbor_id)
                     port = int(port)
-                    self.connected_switches[neighbor_id] = (addr, port)
-                    self.live_neighbors.add(neighbor_id)
-                    self.neighbor_statuses[neighbor_id] = time.time()
-                    self.neighbor_state[neighbor_id] = True
-            # print('Register Response')
-            # print(f'Connected Switches = {self.connected_switches}')
-            # print(f'Live Neighbors = {self.live_neighbors}')
-            # print(f'Neighbor Statuses = {self.neighbor_statuses}')
+                    if self.switch_id != self.link_failure[neighbor_id]:
+                        self.connected_switches[neighbor_id] = (addr, port)
+                        self.live_neighbors.add(neighbor_id)
+                        self.neighbor_statuses[neighbor_id] = time.time()
+                        self.neighbor_state[neighbor_id] = True
+                    else:
+                        self.neighbor_state[neighbor_id] = False
+            print(self.__dict__)
+
                 
         elif request_type == 'Routing_Update':
             print('Received Routing_Update')
@@ -206,8 +222,12 @@ class Switch:
         elif (request_type == 'Keep_Alive'):
             neighbor_id = int(msg)
             print(f'Received Keep_Alive from switch {neighbor_id}')
-            if neighbor_id not in self.live_neighbors.copy():
-                print(f'neighbor {neighbor_id} is alive again')
+            if (self.switch_id == self.link_failure[neighbor_id]):
+                self.neighbor_state[neighbor_id] = True
+                self.live_neighbors.add(neighbor_id)
+                self.neighbor_statuses[neighbor_id] = time.time()
+            elif (neighbor_id not in self.live_neighbors.copy()):
+                # print(f'neighbor {neighbor_id} is alive again')
                 neighbor_alive(neighbor_id)
                 hostname, port = recvd_addr
                 port = int(port)
@@ -219,6 +239,7 @@ class Switch:
                 self.send_topology_update()
             else:
                 self.neighbor_statuses[neighbor_id] = time.time()
+            print(self.__dict__)
                 
     def receive_messages(self):
         while True:
@@ -257,18 +278,21 @@ def main():
     controller_addr = (controller_hostname, controller_port)
 
     # Process command line inputs for -f flag
-    flag1 = False
-    neighbor_id = None
-    for arg in sys.argv[1:]:
-        if arg == '-f':
-            flag1 = True
-            neighbor_id = int(sys.argv[-1])
+    failed_neighbor = None
     
-    switch = Switch(my_id,controller_addr)
+    print(sys.argv)
+    if "-f" in sys.argv:
+        # Extract neighbor ID from command line
+        failed_neighbor_index = sys.argv.index("-f") + 1
+        failed_neighbor = int(sys.argv[failed_neighbor_index])
+        print(failed_neighbor_index,failed_neighbor)
+    
+    switch = Switch(my_id,controller_addr,failed_neighbor)
     switch.send_register_request()
     print("\nWaiting for response from controller...")
     recvd_data, controller_addr = switch.switch_socket.recvfrom(1024)
     switch.handle_recv_message(recvd_data, controller_addr)
+    
     print('---> Received response from controller')
     
     print('Starting Threading')
@@ -278,7 +302,8 @@ def main():
 if __name__ == "__main__":
     main()
     
-    # switch = Switch(0,('USMCDWNCAD6MLXY',1024))
+    # switch = Switch(0,('USMCDWNCAD6MLXY',1024),1)
+    # print(switch.__dict__)
     # switch = Switch(1,('USMCDWNCAD6MLXY',1024))
     
     # switch.neighbor_statuses[1] = time.time()
