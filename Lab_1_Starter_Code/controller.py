@@ -234,6 +234,7 @@ def generate_response_msg(connected_switches,link_failure):
         count += 1
     
     l.append(msg)
+    
     l.append(link_failure)
     return l
 
@@ -257,7 +258,7 @@ def send_message(socket, connected_switches, message):
         for switch_id,switch_addr in connected_switches.items():
             socket.sendto(message, switch_addr)
             register_response_sent(switch_id)
-            print(f'{time.time()} -- Sent Register_Response to switch#{switch_id} @ {switch_addr}')
+            print(f'{time.time()} -- Sent Register_Response to switch#{switch_id}')
     
     elif message_type == 'Routing_Update':
         routing_table = message[1]
@@ -270,9 +271,7 @@ def send_message(socket, connected_switches, message):
             switch_routing_table.append(l)
             message = pickle.dumps(switch_routing_table) # Pickle Message to be sent
             socket.sendto(message, switch_addr)
-            
-        print('!!!Sent ALL Routing_Update')
-        
+            print(f'{time.time()} -- Sent Routing_Update to switch#{switch_id}')
         
 class Controller:
     def __init__(self, controller_port, config_file):
@@ -393,12 +392,12 @@ class Controller:
                 message = pickle.dumps(routing_table_msg) # Pickle Message to be sent
                 self.controller_socket.sendto(message, self.switch_addresses[switch_id])
         
-            print(f'{time.time()} -- Sent routing table {routing_table_msg}')
+            print(f'Sent routing table {routing_table_msg}')
         
         
     def handle_register_request(self, switch_id, failed_id, recvd_addr):
         # Handle Register Request from a switch that was previosly offline
-        print(f"{time.time()} -- Controller received Register Request from Switch {switch_id}")
+        print(f"Controller received Register Request from Switch {switch_id}")
         
         hostname, port = recvd_addr
         port = int(port)
@@ -407,6 +406,7 @@ class Controller:
         self.live_switches.add(switch_id)
         self.switch_addresses = dict(sorted(self.switch_addresses.items()))
         self.link_failure[switch_id] = failed_id
+        
         register_request_received(switch_id)
 
         # Perform recomputation of paths and send Route Update message
@@ -415,7 +415,7 @@ class Controller:
     def wait_for_switches_to_come_online(self):
         self.d,self.total_num_switches = open_file(self.config_file)
         # Wait for all switches to come online
-        print(f'{time.time()} -- Controller is waiting for all switches to come online')
+        print(f'Controller is waiting for all switches to come online')
         num_of_switches_online = 0
         while num_of_switches_online < self.total_num_switches:
             recvd_data, switch_addr = self.controller_socket.recvfrom(1024)
@@ -435,7 +435,8 @@ class Controller:
                 self.link_failure[switch_id] = failed_id
                 register_request_received(switch_id)
                 num_of_switches_online += 1
-        print('All Switches are Online')
+        print('.....All Switches are Online')
+        
         self.switch_addresses = dict(sorted(self.switch_addresses.items())) # sort switch_addresses
         
         # Send Register Response
@@ -452,7 +453,6 @@ class Controller:
         routing_table_msg = generate_routing_table_msg(self.routing_table)
         send_message(self.controller_socket, self.switch_addresses, routing_table_msg)
         print('Sent routing table')
-        print('---Exit-- wait_for_switches_to_come_online()')
 
         
     def handle_topology_update(self,switch_id,neighbor_state,neighbor_status): 
@@ -475,7 +475,7 @@ class Controller:
         # Check if timeout
         for switch,value in self.switch_statuses.items():
             if value  < time.time() - self.TIMEOUT:
-                print(f'{time.time()} -- Switch {switch_id} is dead')
+                print(f'!!! Switch {switch_id} is dead')
                 self.live_switches.discard(switch)
                 topology_update_switch_dead(switch)
 
@@ -487,7 +487,7 @@ class Controller:
         recvd_msg =  pickle.loads(recvd_data)
         request_type = recvd_msg[0]
         
-        print(f'{time.time()} -- Recevied a {request_type} from {recvd_addr}')
+        print(f'Recevied a {request_type} from {recvd_addr}')
         if request_type == 'Topology_Update':
             '''If a controller receives a Topology Update message from a switch 
             that indicates a neighbor is no longer reachable, then the controller 
