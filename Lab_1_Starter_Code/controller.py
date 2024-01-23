@@ -101,7 +101,7 @@ def topology_update_switch_dead(switch_id):
     log = []
     log.append(str(datetime.time(datetime.now())) + "\n")
     log.append(f"Switch Dead {switch_id}\n")
-    write_to_log(log) 
+    write_to_log(log)
 
 # "Topology Update: Switch Alive" Format is below:
 #
@@ -473,8 +473,10 @@ class Controller:
         self.switch_statuses[switch_id] = time.time()
         
         # Check if timeout
-        for switch,value in self.switch_statuses.items():
+        for switch, value in self.switch_statuses.items():
             if value  < time.time() - self.TIMEOUT:
+                print(f'Timeout detected by controller... from switch_statuses sent by switch {switch_id}')
+                print(f'{self.switch_statuses}')
                 print(f'!!! Switch {switch_id} is dead')
                 self.live_switches.discard(switch)
                 topology_update_switch_dead(switch)
