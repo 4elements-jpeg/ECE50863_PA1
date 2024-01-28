@@ -121,8 +121,15 @@ def write_to_log(log):
         # Write to log
         log_file.writelines(log)
 
+def determine_number_of_switches(config_file):
+    '''Returns the number of switches'''
+    with open(config_file, 'r') as f:
+        f = f.readlines()
+        num_switches = int(f[0]) 
 
-def open_file(config_file):
+    return num_switches
+
+def open_file(config_file,link_failure):
     '''This function takes the filepath for a graph_n.txt file and returns a 
     dictionary where each key is a switch id/node and the number of switches. 
     The value is a nested dictionary that has a key-value pair for each 
@@ -152,11 +159,18 @@ def open_file(config_file):
             neighbor_id = int(line[1])
             cost = int(line[2])
             
-            # Update values
-            d[self_id][neighbor_id] = cost
-            d[neighbor_id][self_id] = cost
+            if link_failure[self_id] == neighbor_id:
+                d[self_id][neighbor_id] = 9999
+                d[neighbor_id][self_id] = 9999
+            elif link_failure[neighbor_id] == self_id:
+                d[self_id][neighbor_id] = 9999
+                d[neighbor_id][self_id] = 9999
+            else:
+                # Update values
+                d[self_id][neighbor_id] = cost
+                d[neighbor_id][self_id] = cost
     
-    return d,num_switches
+    return d
 
 
 def min_distance(distances, visited):
@@ -350,14 +364,16 @@ class Controller:
                     hop = -1
                     shortest_distance = 9999
                         
-                # if the key (ie. node-link is broken set to -1 and 9999)
-                if (node in self.link_failure) and (key == self.link_failure[node]):
-                    hop = -1
-                    shortest_distance = 9999
+                # # if the key (ie. node-link is broken set to -1 and 9999)
+                # if (node in self.link_failure) and (key == self.link_failure[node]):
+                #     hop = -1
+                #     shortest_distance = 9999
+                #     # topology_update_link_dead(node,key)
                 
-                elif (key in self.link_failure) and (node == self.link_failure[key]):
-                    hop = -1
-                    shortest_distance = 9999
+                # elif (key in self.link_failure) and (node == self.link_failure[key]):
+                #     hop = -1
+                #     shortest_distance = 9999
+                #     # topology_update_link_dead(key,node)
                         
                 # only create routing table for live switches
                 if node in self.live_switches:
@@ -381,6 +397,7 @@ class Controller:
         if self.change_in_routing_table == True:
             # LOG - Routing Table
             routing_table_update(self.routing_table)
+            
             # Send Routing Table
             routing_table_msg = generate_routing_table_msg(self.routing_table)
             for switch_id in self.live_switches:
@@ -406,6 +423,7 @@ class Controller:
         self.live_switches.add(switch_id)
         self.switch_addresses = dict(sorted(self.switch_addresses.items()))
         self.link_failure[switch_id] = failed_id
+        # topology_update_link_dead(switch_id,failed_id)
         
         register_request_received(switch_id)
 
@@ -413,7 +431,8 @@ class Controller:
         self.recompute_paths_and_send_update()
     
     def wait_for_switches_to_come_online(self):
-        self.d,self.total_num_switches = open_file(self.config_file)
+        self.total_num_switches = determine_number_of_switches(self.config_file)
+    
         # Wait for all switches to come online
         print(f'Controller is waiting for all switches to come online')
         num_of_switches_online = 0
@@ -434,10 +453,13 @@ class Controller:
                 self.live_switches.add(switch_id)
                 self.link_failure[switch_id] = failed_id
                 register_request_received(switch_id)
+                topology_update_link_dead(switch_id,failed_id)
                 num_of_switches_online += 1
         print('.....All Switches are Online')
         
         self.switch_addresses = dict(sorted(self.switch_addresses.items())) # sort switch_addresses
+        
+        self.d = open_file(self.config_file,self.link_failure)
         
         # Send Register Response
         response_msg = generate_response_msg(self.switch_addresses,self.link_failure)
@@ -538,13 +560,35 @@ def main():
 if __name__ == "__main__":
     main()
     
-    # config_file = 'Config/graph_6.txt'
-    # controller = Controller(1088,config_file)
+    # config_file = 'Config/graph_3.txt'
+    # controller = Controller(1094,config_file)
     
-    # controller.d,controller.total_num_switches = open_file(controller.config_file)
-    # for i in range(6):
-    #     addr = ('localhost',2222+i)
-    #     controller.handle_register_request(i, addr)
+    # controller.total_num_switches = determine_number_of_switches(config_file)
+    # addr1 = ('localhost',2222)
+    # addr2 = ('localhost',2223)
+    # addr3 = ('localhost',2224)
+    
+    # controller.switch_addresses[0] = addr1
+    # controller.switch_statuses[0] = time.time()
+    # controller.live_switches.add(0)
+    # controller.link_failure[0] = 1
+    
+    # controller.switch_addresses[1] = addr2
+    # controller.switch_statuses[1] = time.time()
+    # controller.live_switches.add(1)
+    # controller.link_failure[1] = 0
+    
+    # controller.switch_addresses[2] = addr3
+    # controller.switch_statuses[2] = time.time()
+    # controller.live_switches.add(2)
+    # controller.link_failure[2] = None
+    
+    # controller.d = open_file(controller.config_file,controller.link_failure)
+    
+    # controller.create_graph()
+    # controller.create_routing_table()
+    # print(controller.routing_table)
+
     
     # controller.create_graph()
     # print(controller.graph)
